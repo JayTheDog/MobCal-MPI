@@ -8,7 +8,7 @@ module get_commons
 
   private
 
-  public  :: mpi_parameters
+  public  :: mpi_parameters, lj_parameters2, ff_parameters
 
   type  :: mpi_parameters
 
@@ -22,6 +22,18 @@ module get_commons
 
   end type
 
+  type  :: lj_parameters2
+
+    real(wp) :: RijStar(100000),eij(100000)
+
+  end type
+
+  type  :: ff_parameters
+
+    real(wp) :: alphaN2, NiN2, GiN2, NiHe, GiHe
+    real(wp) :: RN2Star, alphaHe, RHeStar
+    real(wp) :: MMFF_B, MMFF_beta
+  end type
 
 end module get_commons
 
