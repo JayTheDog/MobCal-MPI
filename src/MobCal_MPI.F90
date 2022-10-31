@@ -81,7 +81,7 @@
 !     TRAJ calculates a series of trajectories for closer examination.
 !
 !     TRAJONE calculates one trajectory for a given velocity, impact
-!     parameter, and angles (theta, phi, and gamma in degrees).
+!     parameter, and angles (ang%theta, ang%phi, and ang%gamma in degrees).
 !
 !     POTENT determines the average potential. (Only for near spherical
 !     molecules or clusters).
@@ -99,45 +99,46 @@
 ! Version updated by Jay -- Jeroen Koopman
 
 program MobCal
+  use constants
   use mpi
-  use get_commons, only: mpi_parameters, lj_parameters2, ff_parameters
+  use get_commons, only: mpi_parameters, lj_parameters2, ff_parameters, constants, &
+    & coordinates, trajectory, read_inp
   use xtb_mctc_accuracy
   implicit none
    
-  !implicit double precision (a-h,m-z)
   !include 'mpif.h'
+
+  integer :: i, i1
+  integer :: iadd
   real(wp) :: t, mob, cs, sdevpc
   
   real(wp) :: asymp
+  real(wp) :: xrand
   
   integer, parameter :: ixlen=100000
-  !integer :: ierr, inprocs, imyrank
-  !integer :: s_time
-  !integer :: i2, itn
-  integer itcnt
+
+  integer :: itcnt
+  integer :: ip, it, iu1, iu2, iu3, iv, im2, im4, igs
+  integer :: itloop
 
   real(wp) :: AiHe, AiN2
+  real(wp) :: pcharge(100000)
   
   character(len=50) :: filen1,filen2,unit,dchar,xlabel,infile
   character(len=2) :: flend(32)
   
-  !common/printswitch/ip,it,iu1,iu2,iu3,iv,im2,im4,igs
-  common/constants/mu,ro,eo,pi,cang,ro2,dipol,emax,m1,m2,&
-  &xe,xeo,xk,xn,mconst,correct,romax,inatom,icoord,iic
-  common/charge/pcharge(ixlen),k_const(ixlen)
-  common/coordinates/fx(ixlen),fy(ixlen),fz(ixlen),&
-  &ox(ixlen),oy(ixlen),oz(ixlen)
 
-  common/hsparameters/rhs(ixlen),rhs2(ixlen)
-  common/trajectory/sw1,sw2,dtsf1,dtsf2,cmin,ifail,ifailc,inwr
-  common/angles/theta,phi,gamma
-  common/scaling/enersca,distsca
+  real(wp) dens
+
   !****NEED COMMON BLOCK FOR MPI ELEMENTS
   !common/mpicon/imyrank,inprocs,imp_per_node,inp_per_node,s_time
   !common/runparams/itn,inp,imp,igas
-  !****Add ability for tarray.. up to max of 50 temps
-  dimension tarray(50)
-  dimension tmmarray(50),csarray(50),sdevarray(50)
+  !****Add ability for temparray.. up to max of 50 temps
+  !dimension temparray(50)
+  !dimension tmmarray(50),csarray(50),sdevarray(50)
+  real(wp) :: temparray(50)
+  real(wp) ::  tmmarray(50),csarray(50),sdevarray(50)
+
   !******
   data flend/'_1','_2','_3','_4','_5','_6','_7','_8',&
   &'_9','10','11','12','13','14','15','16','17','18',&
@@ -148,6 +149,10 @@ program MobCal
   type(mpi_parameters) :: mpiP
   type(lj_parameters2) :: lj
   type(ff_parameters) :: mmff 
+  type(constants) :: const
+  type(coordinates) :: coord
+  type(trajectory) :: trj
+  type(read_inp) :: inp
 
 
   !****Start MPI Stuff
@@ -215,16 +220,8 @@ program MobCal
   im4=0
   igs=0
   !
-  !     Constants from Handbook of Chemistry and Physics, 70th Edition
   !
-  pi=3.14159265358979323846d0
-  cang=180.d0/pi
-  xe=1.60217733d-19
-  xk=1.380658d-23
-  xn=6.0221367d23
-  xeo=8.854187817d-12
   !     Temperature
-  !
   !      t=301.d0
   !      t=298.d0
   !      xmv=8.20573660809596d-5*t
@@ -248,28 +245,28 @@ program MobCal
   mmff%MMFF_beta=12.0d0
   !*****
   if(mpiP%imyrank.eq.0)then
-     call fcoord(filen1,unit,dchar,xlabel,asymp,tarray,itcnt)
+     call fcoord(filen1,unit,dchar,xlabel,asymp,temparray,itcnt)
      close(9)
   endif
   !*******************
   !****Broadcast******
   call MPI_BCAST(itcnt,1,MPI_INTEGER,0,MPI_COMM_WORLD,mpiP%ierr)
-  call MPI_BCAST(tarray,itcnt,MPI_DOUBLE_PRECISION,0,&
+  call MPI_BCAST(temparray,itcnt,MPI_DOUBLE_PRECISION,0,&
   &MPI_COMM_WORLD,mpiP%ierr)
   call MPI_BCAST(mpiP%itn,1,MPI_INTEGER,0,MPI_COMM_WORLD,mpiP%ierr)
   call MPI_BCAST(mpiP%i2,1,MPI_INTEGER,0,MPI_COMM_WORLD,mpiP%ierr)
   call MPI_BCAST(mpiP%inp,1,MPI_INTEGER,0,MPI_COMM_WORLD,mpiP%ierr)
   call MPI_BCAST(mpiP%imp,1,MPI_INTEGER,0,MPI_COMM_WORLD,mpiP%ierr)
   call MPI_BCAST(mpiP%igas,1,MPI_INTEGER,0,MPI_COMM_WORLD,mpiP%ierr)
-  call MPI_BCAST(inatom,1,MPI_INTEGER,0,MPI_COMM_WORLD,mpiP%ierr)
-  call MPI_BCAST(icoord,1,MPI_INTEGER,0,MPI_COMM_WORLD,mpiP%ierr)
-  call MPI_BCAST(m2,1,MPI_DOUBLE_PRECISION,0,MPI_COMM_WORLD,mpiP%ierr)
-  call MPI_BCAST(romax,1,MPI_DOUBLE_PRECISION,0,MPI_COMM_WORLD,mpiP%ierr)
-  call MPI_BCAST(fx,ixlen,MPI_DOUBLE_PRECISION,0,&
+  call MPI_BCAST(inp%inatom,1,MPI_INTEGER,0,MPI_COMM_WORLD,mpiP%ierr)
+  call MPI_BCAST(inp%icoord,1,MPI_INTEGER,0,MPI_COMM_WORLD,mpiP%ierr)
+  call MPI_BCAST(const%m2,1,MPI_DOUBLE_PRECISION,0,MPI_COMM_WORLD,mpiP%ierr)
+  call MPI_BCAST(const%romax,1,MPI_DOUBLE_PRECISION,0,MPI_COMM_WORLD,mpiP%ierr)
+  call MPI_BCAST(coord%fx,ixlen,MPI_DOUBLE_PRECISION,0,&
   &MPI_COMM_WORLD,mpiP%ierr)
-  call MPI_BCAST(fy,ixlen,MPI_DOUBLE_PRECISION,0,&
+  call MPI_BCAST(coord%fy,ixlen,MPI_DOUBLE_PRECISION,0,&
   &MPI_COMM_WORLD,mpiP%ierr)
-  call MPI_BCAST(fz,ixlen,MPI_DOUBLE_PRECISION,0,&
+  call MPI_BCAST(coord%fz,ixlen,MPI_DOUBLE_PRECISION,0,&
   &MPI_COMM_WORLD,mpiP%ierr)
   call MPI_BCAST(pcharge,ixlen,MPI_DOUBLE_PRECISION,0,&
   &MPI_COMM_WORLD,mpiP%ierr)
@@ -277,11 +274,11 @@ program MobCal
   &MPI_COMM_WORLD,mpiP%ierr)
   call MPI_BCAST(lj%RijStar,ixlen,MPI_DOUBLE_PRECISION,0,&
   &MPI_COMM_WORLD,mpiP%ierr)
-  call MPI_BCAST(ox,ixlen,MPI_DOUBLE_PRECISION,0,&
+  call MPI_BCAST(coord%ox,ixlen,MPI_DOUBLE_PRECISION,0,&
   &MPI_COMM_WORLD,mpiP%ierr)
-  call MPI_BCAST(oy,ixlen,MPI_DOUBLE_PRECISION,0,&
+  call MPI_BCAST(coord%oy,ixlen,MPI_DOUBLE_PRECISION,0,&
   &MPI_COMM_WORLD,mpiP%ierr)
-  call MPI_BCAST(oz,ixlen,MPI_DOUBLE_PRECISION,0,&
+  call MPI_BCAST(coord%oz,ixlen,MPI_DOUBLE_PRECISION,0,&
   &MPI_COMM_WORLD,mpiP%ierr)
   !******k*************
   !***Added loop here over temperature array
@@ -291,14 +288,13 @@ program MobCal
   !
   !      t=301.d0
   !      t=298.d0
-     t=tarray(itloop)
-     xmv=8.20573660809596d-5*t
+     t=temparray(itloop)
   !     Lennard-Jones scaling parameters
   !
-     eo=1.34d-03*xe
-     ro=3.043d0*1.0d-10
-     ro2=ro*ro
-     if(mpiP%imyrank.eq.0)write(8,600) eo/xe,ro/1.0d-10
+     const%eo=1.34d-03*xe
+     const%ro=3.043d0*1.0d-10
+     const%ro2=const%ro*const%ro
+     if(mpiP%imyrank.eq.0)write(8,600) const%eo/xe,const%ro/1.0d-10
   !
   !     Constant for ion-induced dipole potential
   !
@@ -306,33 +302,33 @@ program MobCal
   !     xeo is permitivity of vacuum, 8.854187817d-12 F.m-1
   !
      if(mpiP%igas.eq.2)then
-        dipol=1.740d-30/(2.d0*4.d0*pi*xeo)
-        dipol=dipol*xe*xe
-        if(mpiP%imyrank.eq.0)write(8,601) dipol
+        const%dipol=1.740d-30/(2.d0*4.d0*pi*xeo)
+        const%dipol=const%dipol*xe*xe
+        if(mpiP%imyrank.eq.0)write(8,601) const%dipol
   !
   !     Mass constants
   !
-        m1=28.0134d0
-        mu=((m1*m2)/(m1+m2))/(xn*1.0d3)
+        const%m1=28.0134d0
+        const%mu=((const%m1*const%m2)/(const%m1+const%m2))/(xn*1.0d3)
      elseif(mpiP%igas.eq.1)then
-        dipol=0.204956d-30/(2.0d0*4.0d0*pi*xeo)
-        dipol=dipol*xe*xe
-        if(mpiP%imyrank.eq.0)write(8,601) dipol
+        const%dipol=0.204956d-30/(2.0d0*4.0d0*pi*xeo)
+        const%dipol=const%dipol*xe*xe
+        if(mpiP%imyrank.eq.0)write(8,601) const%dipol
   !
   !     Mass constants
   !
-        m1=4.0026d0
-        mu=((m1*m2)/(m1+m2))/(xn*1.0d3)
+        const%m1=4.0026d0
+        const%mu=((const%m1*const%m2)/(const%m1+const%m2))/(xn*1.0d3)
      endif
   !
   !     Mobility constant
   !
-     mconst=dsqrt(18.d0*pi)/16.d0
-     mconst=mconst*dsqrt(xn*1.0d3)*dsqrt((1.d0/m1)+(1.d0/m2))
-     mconst=mconst*xe/dsqrt(xk)
-     dens=xn/xmv
-     mconst=mconst/dens
-  !      if(mpiP%imyrank.eq.0)write(8,602) mconst
+     const%mconst=dsqrt(18.d0*pi)/16.d0
+     const%mconst=const%mconst*dsqrt(xn*1.0d3)*dsqrt((1.d0/const%m1)+(1.d0/const%m2))
+     const%mconst=const%mconst*xe/dsqrt(xk)
+     dens=xn/(8.20573660809596d-5*t)
+     const%mconst=const%mconst/dens
+  !      if(mpiP%imyrank.eq.0)write(8,602) const%mconst
   !
   
      if(mpiP%imyrank.eq.0)write(8,603) t
@@ -388,29 +384,29 @@ program MobCal
   !     Minimum value of (1-cosX). This quantity determines the maximum
   !     impact parameter at each velocity. Default value is 0.0005.
   !
-     cmin=0.0005d0
+     trj%cmin=0.0005d0
   !
-  !     Define some parameters for trajectories: sw1 defines the potential
-  !     energy where the trajectory starts and dtsf1 is related to the
+  !     Define some parameters for trajectories: trj%sw1 defines the potential
+  !     energy where the trajectory starts and trj%dtsf1 is related to the
   !     time step at the start of the trajectory. As the trajectory comes
-  !     close to a collision the time step is reduced. sw2 defines the
-  !     potential energy where the time step is reduced and dtsf2 defines
+  !     close to a collision the time step is reduced. trj%sw2 defines the
+  !     potential energy where the time step is reduced and trj%dtsf2 defines
   !     the reduced time step. Default values are:
-  !     sw1 = 0.00005   dtsf1=0.5
-  !     sw2 = 0.0025    dtsf2=0.05
-  !     inwr is the number of integration steps before the program tests
-  !     to see if the trajectory is done or lost. ifail is the number of
+  !     trj%sw1 = 0.00005   trj%dtsf1=0.5
+  !     trj%sw2 = 0.0025    trj%dtsf2=0.05
+  !     trj%inwr is the number of integration steps before the program tests
+  !     to see if the trajectory is done or lost. trj%ifail is the number of
   !     failed trajectories that are permitted (a failed trajectory is one
   !     that does not conserve energy to within 1%. Default values are:
-  !     inwr = 1        ifail = 100
+  !     trj%inwr = 1        trj%ifail = 100
   !
-     sw1=0.00005d0
-     sw2=0.005d0
-     dtsf1=0.5d0
-     dtsf2=0.1d0
-     inwr=1
-     ifail=100
-     ifailc=0
+     trj%sw1=0.00005d0
+     trj%sw2=0.005d0
+     trj%dtsf1=0.5d0
+     trj%dtsf2=0.1d0
+     trj%inwr=1
+     trj%ifail=100
+     trj%ifailc=0
   !******
      mob=0.d0
      cs=0.0d0
@@ -429,7 +425,7 @@ program MobCal
      if(mpiP%imyrank.eq.0)then
   !
         write(8,605) filen1,xlabel
-        write(8,618) 1.d0/mob,cs*1.d20,sdevpc,ifailc
+        write(8,618) 1.d0/mob,cs*1.d20,sdevpc,trj%ifailc
         write(8,615)mpiP%itn,mpiP%inp,mpiP%imp,mpiP%itn*mpiP%inp*mpiP%imp
         if(mpiP%igas.eq.2)then
            write(8,*)'Mobility Calculated under N2 gas'
@@ -445,7 +441,7 @@ program MobCal
   do itloop=1,itcnt
      if(mpiP%imyrank.eq.0)then
         write(8,'(t1,f7.3,",",e13.6,",",e13.6)')&
-        &tarray(itloop),csarray(itloop)*1.d20,sdevarray(itloop)
+        &temparray(itloop),csarray(itloop)*1.d20,sdevarray(itloop)
      endif
   enddo
   !********************************
@@ -460,116 +456,117 @@ program MobCal
   !********************************
   call MPI_FINALIZE(mpiP%ierr)
   !****
-  !601 format(1x,'dipole constant =',1pe11.4)
-  !602 format(1x,'mobility constant =',1pe11.4)
-  !603 format(1x,'temperature =',1pe11.4)
-  !619 format(/1x,'using RANLUX',/)
-  !604 format(1x,'using RAND with seed integer =',i8)
-  !635 format(/)
-  !!621 format(/1x,'coordinate set =',mpiP%i5)
-  !637 format(/1x,'structural asymmetry parameter =',f8.4)
-  !608 format(1x,'using no charge - only LJ interactions')
-  !612 format(/1x,'inverse average EHS mobility =',1pe11.4,&
-  !&/1x,'average EHS cross section =',e11.4)
-  !611 format(/1x,'inverse average PA mobility =',1pe11.4,&
-  !&/1x,'average PA cross section =',e11.4)
-  !609 format(/1x,'mobility calculation by MOBIL4 (HS scattering)')
-  !!610 format(/1x,'number of Monte Carlo trajectories =',i7,&
-  !!&/1x,'maximum number of reflections encountered =',mpiP%i3)
-  !616 format(1x,'temperature =',1pe11.4)
-  !617 format(1x,'using RAND with seed integer =',i8)
-  !620 format(1x,'using RANLUX with seed integer =',i8)
-  !636 format(1x,'structural asymmetry parameter =',1pe11.4)
-  !607 format(1x,'using a calculated (non-uniform) charge distribution')
-  !606 format(1x,'using a uniform charge distribution')
-  !605 format(///1x,'SUMMARY',//1x,'program version = junkn.f',&
-  !&/1x,'input file name = ',a50,/1x,'input file label = ',a50)
-  !615 format(/1x,'number of complete cycles (mpiP%itn) =',mpiP%i6,/1x,&
-  !&'number of velocity points (mpiP%inp) =',mpiP%i6,/1x,&
-  !&'number of random points (mpiP%imp) =',mpiP%i6,/1x,&
-  !&'total number of points =',i7)
-  !614 format(/1x,'trajectory parameters',/1x,'sw1 =',1pe11.4,7x,&
-  !&'sw2 =',e11.4,/1x,'dtsf1 =',e11.4,5x,'dtsf2 =',e11.4)
-  !613 format(/1x,'mobility calculation by MOBIL2 (trajectory method)')
-  !618 format(/1x,'inverse average (second order) TM mobility =',&
-  !&1pe11.4,/1x,'average TM cross section =',e11.4,/1x,&
-  !&'standard deviation (percent) =',e11.4,/1x,&
-  !&'number of failed trajectories =',mpiP%i4)
-  !634 format(/1x,'minimum and maximum number of reflections =',&
-  !&mpiP%i3,2x,mpiP%i3)
-  !622 format(//4x,'set',5x,'PA CS',7x,'PA MOB^-1',6x,'EHSS CS',&
-  !&6x,'EHSS MOB^-1',4x,'ASYMP')
-  !626 format(/1x,'number of Monte Carlo trajectories =',i7)
-  !625 format(/1x,'mobility calculation by MOBIL4 (HS scattering)')
-  !623 format(1x,mpiP%i5,3x,1pe11.4,3x,e11.4,3x,e11.4,3x,e11.4,3x,f8.4)
-  !624 format(/3x,'AVGE',2x,1pe11.4,3x,e11.4,3x,e11.4,3x,e11.4,3x,f8.4)
-  !628 format(/1x,'trajectory parameters',/1x,'sw1 =',1pe11.4,7x,&
-  !&'sw2 =',e11.4,/1x,'dtsf1 =',e11.4,5x,'dtsf2 =',e11.4)
-  !631 format(1x,mpiP%i5,3x,1pe11.4,3x,e11.4)
-  !629 format(/1x,'number of complete cycles (mpiP%itn) =',mpiP%i6,/1x,&
-  !&'number of velocity points (mpiP%inp) =',mpiP%i6,/1x,&
-  !&'number of random points (mpiP%imp) =',mpiP%i6,/1x,&
-  !&'total number of points =',i7)
-  !630 format(//4x,'set',5x,'TM CS',7x,'TM MOB^-1')
-  !633 format(/1x,'total number of failed trajectories =',mpiP%i4)
-  !632 format(/3x,'AVGE',2x,1pe11.4,3x,e11.4)
-  !627 format(/1x,'mobility calculation by MOBIL2 (trajectory method)')
-  !600 format(1x,'Lennard-Jones scaling parameters: eo=',&
-  !&1pe11.4,1x,'ro=',e11.4)
-  !750 format(1x,a7,1x,f5.2)
+  601 format(1x,'dipole constant =',1pe11.4)
+  602 format(1x,'mobility constant =',1pe11.4)
+  603 format(1x,'temperature =',1pe11.4)
+  619 format(/1x,'using RANLUX',/)
+  604 format(1x,'using RAND with seed integer =',i8)
+  635 format(/)
+  621 format(/1x,'coordinate set =',i5)
+  637 format(/1x,'structural asymmetry parameter =',f8.4)
+  608 format(1x,'using no charge - only LJ interactions')
+  612 format(/1x,'inverse average EHS mobility =',1pe11.4,&
+  &/1x,'average EHS cross section =',e11.4)
+  611 format(/1x,'inverse average PA mobility =',1pe11.4,&
+  &/1x,'average PA cross section =',e11.4)
+  609 format(/1x,'mobility calculation by MOBIL4 (HS scattering)')
+  !610 format(/1x,'number of Monte Carlo trajectories =',i7,&
+  !&/1x,'maximum number of reflections encountered =',mpiP%i3)
+  616 format(1x,'temperature =',1pe11.4)
+  617 format(1x,'using RAND with seed integer =',i8)
+  620 format(1x,'using RANLUX with seed integer =',i8)
+  636 format(1x,'structural asymmetry parameter =',1pe11.4)
+  607 format(1x,'using a calculated (non-uniform) charge distribution')
+  606 format(1x,'using a uniform charge distribution')
+  605 format(///1x,'SUMMARY',//1x,'program version = junkn.f',&
+  &/1x,'input file name = ',a50,/1x,'input file label = ',a50)
+  615 format(/1x,'number of complete cycles (mpiP%itn) =',i6,/1x,&
+  &'number of velocity points (mpiP%inp) =',i6,/1x,&
+  &'number of random points (mpiP%imp) =',i6,/1x,&
+  &'total number of points =',i7)
+  614 format(/1x,'trajectory parameters',/1x,'trj%sw1 =',1pe11.4,7x,&
+  &'trj%sw2 =',e11.4,/1x,'trj%dtsf1 =',e11.4,5x,'trj%dtsf2 =',e11.4)
+  613 format(/1x,'mobility calculation by MOBIL2 (trajectory method)')
+  618 format(/1x,'inverse average (second order) TM mobility =',&
+  &1pe11.4,/1x,'average TM cross section =',e11.4,/1x,&
+  &'standard deviation (percent) =',e11.4,/1x,&
+  &'number of failed trajectories =',i4)
+  634 format(/1x,'minimum and maximum number of reflections =',i3,2x,i3)
+  622 format(//4x,'set',5x,'PA CS',7x,'PA MOB^-1',6x,'EHSS CS',&
+  &6x,'EHSS MOB^-1',4x,'ASYMP')
+  626 format(/1x,'number of Monte Carlo trajectories =',i7)
+  625 format(/1x,'mobility calculation by MOBIL4 (HS scattering)')
+  623 format(1x,i5,3x,1pe11.4,3x,e11.4,3x,e11.4,3x,e11.4,3x,f8.4)
+  624 format(/3x,'AVGE',2x,1pe11.4,3x,e11.4,3x,e11.4,3x,e11.4,3x,f8.4)
+  628 format(/1x,'trajectory parameters',/1x,'trj%sw1 =',1pe11.4,7x,&
+  &'trj%sw2 =',e11.4,/1x,'trj%dtsf1 =',e11.4,5x,'trj%dtsf2 =',e11.4)
+  631 format(1x,i5,3x,1pe11.4,3x,e11.4)
+  629 format(/1x,'number of complete cycles (mpiP%itn) =',i6,/1x,&
+  &'number of velocity points (mpiP%inp) =',i6,/1x,&
+  &'number of random points (mpiP%imp) =',i6,/1x,&
+  &'total number of points =',i7)
+  630 format(//4x,'set',5x,'TM CS',7x,'TM MOB^-1')
+  633 format(/1x,'total number of failed trajectories =',i4)
+  632 format(/3x,'AVGE',2x,1pe11.4,3x,e11.4)
+  627 format(/1x,'mobility calculation by MOBIL2 (trajectory method)')
+  600 format(1x,'Lennard-Jones scaling parameters: const%eo=',&
+  &1pe11.4,1x,'const%ro=',e11.4)
+  750 format(1x,a7,1x,f5.2)
   stop
   !end
   end program MobCal
   !
   !     ***************************************************************
   !
-  subroutine fcoord(filen1,unit,dchar,xlabel,asymp,tarray,itcnt)
+  subroutine fcoord(filen1,unit,dchar,xlabel,asymp,temparray,itcnt)
   !
   !     Reads in coordinates and other parameters.
+      use constants
       use mpi
-      use get_commons, only: mpi_parameters, lj_parameters2, ff_parameters
+      use get_commons, only: mpi_parameters, lj_parameters2, ff_parameters, constants,&
+        & coordinates, angles, read_inp
       use xtb_mctc_accuracy
       implicit none
   !
-      integer :: itcnt
-     integer :: correct, inatom, icoord
+     integer :: i, iatom, igamma, iphi, ilen, isw, k
+     integer :: itcnt, istart, ifin
+     integer :: correct
 
-      real(wp) :: alphai(100000), Ni(100000),Ai(100000),Gi(100000)
-      real(wp) :: RiiStar, gammaij
-      real (wp) :: xe,xeo,xk,xn,mconst,romax
+     real(wp) :: alphai(100000), Ni(100000),Ai(100000),Gi(100000)
+     real(wp) :: RiiStar, gammaij, Rsum
      real(wp) :: asymp
-     real(wp) :: mu,ro,eo,pi,cang,ro2,dipol,emax,m1,m2
-
+     real(wp) :: temparray(50)
+     real(wp) :: enersca, distsca
+     real(wp) :: pcharge(100000)
+     real(wp) :: xmass(100000)
+     real(wp) :: acharge, tcharge
+     real(wp) :: coeff1, coeff2, coeff3
+     real(wp) :: fxo, fyo, fzo
+     real(wp) :: hold
+     real(wp) :: xyz, yz, xyzsum, yzsum
 
      character*50 filen1,unit,dchar,xlabel
      integer, parameter :: ixlen=100000
-     dimension imass(ixlen),xmass(ixlen)
-     dimension tarray(50)
-     common/printswitch/ip,it,iu1,iu2,iu3,iv,im2,im4,igs
 
-     common/charge/pcharge(ixlen),k_const(ixlen)
-     common/coordinates/fx(ixlen),fy(ixlen),fz(ixlen),&
-     &ox(ixlen),oy(ixlen),oz(ixlen)
-
-     common/hsparameters/rhs(ixlen),rhs2(ixlen)
-     common/trajectory/sw1,sw2,dtsf1,dtsf2,cmin,ifail,ifailc,inwr
-     common/angles/theta,phi,gamma
-     common/scaling/enersca,distsca
      character*1000 readline
 
      type(mpi_parameters) :: mpiP
      type(lj_parameters2) :: lj
      type(ff_parameters) :: mmff
+     type(constants) :: const
+     type(coordinates) :: coord
+     type(angles) :: ang
+     type(read_inp) :: inp
   !
      write(8,603) filen1
      open (9,file=filen1)
      read(9,'(a30)') xlabel !mol name 
      write(8,601) xlabel
-     read(9,*) icoord ! ?
-     write(8,650) icoord
+     read(9,*) inp%icoord ! ? = 1
+     write(8,650) inp%icoord
   !
-     read(9,*) inatom !no of atoms
-     write(8,612) inatom
+     read(9,*) inp%inatom !no of atoms
+     write(8,612) inp%inatom
      read(9,'(a30)') unit !units (angström)
      read(9,'(a30)') dchar !task
   !
@@ -609,7 +606,7 @@ program MobCal
                  read(readline(istart:ifin),*)mpiP%i2 !random seed
               elseif(k.ge.6)then
                  itcnt=itcnt+1 
-                 read(readline(istart:ifin),*)tarray(itcnt) ! iterate over temperatures
+                 read(readline(istart:ifin),*)temparray(itcnt) ! iterate over temperatures
               endif
            endif
         endif
@@ -648,8 +645,8 @@ program MobCal
      acharge=0.d0
 
   !> Read in xyz, mass, charge and vdw parameters from input
-  do iatom=1,inatom
-        read(9,*) fx(iatom),fy(iatom),fz(iatom),&
+  do iatom=1,inp%inatom
+        read(9,*) coord%fx(iatom),coord%fy(iatom),coord%fz(iatom),&
         & xmass(iatom), pcharge(iatom),&
         & alphai(iatom), Ni(iatom), Ai(iatom), Gi(iatom)
 
@@ -683,32 +680,32 @@ program MobCal
         tcharge=tcharge+pcharge(iatom)
         acharge=acharge+dabs(pcharge(iatom))
         if(unit.eq.'au') then
-           fx(iatom)=fx(iatom)*0.52917706d0
-           fy(iatom)=fy(iatom)*0.52917706d0
-           fz(iatom)=fz(iatom)*0.52917706d0
+           coord%fx(iatom)=coord%fx(iatom)*0.52917706d0
+           coord%fy(iatom)=coord%fy(iatom)*0.52917706d0
+           coord%fz(iatom)=coord%fz(iatom)*0.52917706d0
         endif
   end do
   !
      if(dchar.eq.'equal') then
-        do 2011 iatom=1,inatom
-  ! 2011 pcharge(iatom)=1.d0/dble(inatom)
-           pcharge(iatom)=tcharge/dble(inatom)
+        do 2011 iatom=1,inp%inatom
+  ! 2011 pcharge(iatom)=1.d0/dble(inp%inatom)
+           pcharge(iatom)=tcharge/dble(inp%inatom)
   2011  continue
      endif
   !
      if(dchar.eq.'none') then
-        do 2012 iatom=1,inatom
+        do 2012 iatom=1,inp%inatom
            pcharge(iatom)=0.d0
   2012  continue
      endif
   !
   !      if(dchar.ne.'none') write(8,615) tcharge,acharge
   !**********
-     m2=0.d0
-     do 2021 iatom=1,inatom
-        m2=m2+xmass(iatom)
+     const%m2=0.d0
+     do 2021 iatom=1,inp%inatom
+        const%m2=const%m2+xmass(iatom)
   2021 continue
-     write(8,604) m2
+     write(8,604) const%m2
   !
   !
   !      if(iu1.eq.1) write(8,620)
@@ -716,65 +713,61 @@ program MobCal
      fxo=0.d0
      fyo=0.d0
      fzo=0.d0
-     do 2009 iatom=1,inatom
-        fxo=fxo+(fx(iatom)*xmass(iatom))
-        fyo=fyo+(fy(iatom)*xmass(iatom))
-        fzo=fzo+(fz(iatom)*xmass(iatom))
+     do 2009 iatom=1,inp%inatom
+        fxo=fxo+(coord%fx(iatom)*xmass(iatom))
+        fyo=fyo+(coord%fy(iatom)*xmass(iatom))
+        fzo=fzo+(coord%fz(iatom)*xmass(iatom))
   2009 continue
-     fxo=fxo/m2
-     fyo=fyo/m2
-     fzo=fzo/m2
-  !      write(8,623) fxo,fyo,fzo
-     do 2010 iatom=1,inatom
-        fx(iatom)=(fx(iatom)-fxo)*1.d-10*correct
-        fy(iatom)=(fy(iatom)-fyo)*1.d-10*correct
-        fz(iatom)=(fz(iatom)-fzo)*1.d-10*correct
-  !      if(iu1.eq.1) write(8,600) fx(iatom),fy(iatom),fz(iatom),
-  !     ?imass(iatom),pcharge(iatom),lj%eij(iatom)/xe,lj%RijStar(iatom)*1.0d10
+     fxo=fxo/const%m2
+     fyo=fyo/const%m2
+     fzo=fzo/const%m2
+     do 2010 iatom=1,inp%inatom
+        coord%fx(iatom)=(coord%fx(iatom)-fxo)*1.d-10*correct
+        coord%fy(iatom)=(coord%fy(iatom)-fyo)*1.d-10*correct
+        coord%fz(iatom)=(coord%fz(iatom)-fzo)*1.d-10*correct
   2010 continue
-  !      if(iu1.eq.1) write(8,621)
   !
-     if(icoord.eq.1) close(9)
+     if(inp%icoord.eq.1) close(9)
   !
-     do 3000 iatom=1,inatom
-        ox(iatom)=fx(iatom)
-        oy(iatom)=fy(iatom)
-        oz(iatom)=fz(iatom)
+     do 3000 iatom=1,inp%inatom
+        coord%ox(iatom)=coord%fx(iatom)
+        coord%oy(iatom)=coord%fy(iatom)
+        coord%oz(iatom)=coord%fz(iatom)
   3000 continue
   !
-     romax=0.d0
-     do 3001 iatom=1,inatom
-        if(lj%RijStar(iatom).gt.romax) romax=lj%RijStar(iatom)
+     const%romax=0.d0
+     do 3001 iatom=1,inp%inatom
+        if(lj%RijStar(iatom).gt.const%romax) const%romax=lj%RijStar(iatom)
   3001 continue
   !
-     romax=romax+(1.1055d-10/2.0)
+     const%romax=const%romax+(1.1055d-10/2.0)
   !
   !     determine structural asymmetry parameter
   !
-     theta=0.d0
+     ang%theta=0.d0
      asymp=0.d0
-     do 5010 igamma=0,360,2
-        do 5000 iphi=0,180,2
-           gamma=dble(igamma)/cang
-           phi=dble(iphi)/cang
+     do igamma=0,360,2
+        do iphi=0,180,2
+           ang%gamma=dble(igamma)/cang
+           ang%phi=dble(iphi)/cang
            call rotate
            xyzsum=0.d0
            yzsum=0.d0
-           do 5005 iatom=1,inatom
-              xyz=dsqrt(fx(iatom)**2+fy(iatom)**2+fz(iatom)**2)
-              yz=dsqrt(fy(iatom)**2+fz(iatom)**2)
+           do iatom=1,inp%inatom
+              xyz=dsqrt(coord%fx(iatom)**2+coord%fy(iatom)**2+coord%fz(iatom)**2)
+              yz=dsqrt(coord%fy(iatom)**2+coord%fz(iatom)**2)
               xyzsum=xyzsum+xyz
               yzsum=yzsum+yz
-  5005     continue
+           end do
            hold=((pi/4.d0)*xyzsum)/yzsum
            if(hold.gt.asymp) asymp=hold
-  5000  continue
-  5010 continue
+         end do
+      end do
   !
   603 format(1x,'input file name = ',a50)
   601 format(1x,'input file label = ',a50)
-  !650 format(1x,'number of coordinate sets =',mpiP%i5)
-  !612 format(1x,'number of atoms =',mpiP%i4)
+  650 format(1x,'number of coordinate sets =',i5)
+  612 format(1x,'number of atoms =',i4)
   611 format(1x,'coordinates in atomic units')
   614 format(1x,'coordinates in angstroms')
   610 format(1x,'units not specified')
@@ -787,12 +780,11 @@ program MobCal
      &'total absolute charge =',e11.4)
   620 format(/9x,'initial coordinates',9x,'mass',3x,'charge',&
      &9x,'LJ parameters',/)
-  !602 format(1x,'type not defined for atom number',mpiP%i3)
+  602 format(1x,'type not defined for atom number',i3)
   604 format(1x,'mass of ion =',1pd11.4)
   623 format(1x,'center of mass coordinates = ',1pe11.4,',',e11.4,&
      &',',e11.4)
-  !600 format(1x,1pe11.4,1x,e11.4,1x,e11.4,1x,mpiP%i3,1x,&
-  !   &e11.4,1x,e11.4,1x,e11.4)
+  600 format(1x,1pe11.4,1x,e11.4,1x,e11.4,1x,i3,1x,e11.4,1x,e11.4,1x,e11.4)
   621 format(/)
      return
   end subroutine fcoord
@@ -803,24 +795,21 @@ program MobCal
   !
   !     Rotates the cluster/molecule to a random orientation.
       use mpi
+      use get_commons, only: constants, angles
       implicit none
   !
      !implicit double precision (a-h,m-z)
      !include 'mpif.h'
-     common/printswitch/ip,it,iu1,iu2,iu3,iv,im2,im4,igs
-     common/constants/mu,ro,eo,pi,cang,ro2,dipol,emax,m1,m2,&
-     &xe,xeo,xk,xn,mconst,correct,romax,inatom,icoord,iic
-     common/trajectory/sw1,sw2,dtsf1,dtsf2,cmin,ifail,ifailc,inwr
-     common/angles/theta,phi,gamma
-     common/scaling/enersca,distsca
   !
+    type(constants) :: const
+    type(angles) :: ang
 
      rnt=xrand()
      rnp=xrand()
      rng=xrand()
-     theta=rnt*2.d0*pi
-     phi=dasin((rnp*2.d0)-1.d0)+(pi/2.d0)
-     gamma=rng*2.d0*pi
+     ang%theta=rnt*2.d0*pi
+     ang%phi=dasin((rnp*2.d0)-1.d0)+(pi/2.d0)
+     ang%gamma=rng*2.d0*pi
      call rotate
   !
      return
@@ -832,60 +821,65 @@ program MobCal
   subroutine rotate
   !
   !     Rotates the cluster/molecule.
+      use constants
       use mpi
+      use get_commons, only: constants, coordinates, angles, read_inp
+      use xtb_mctc_accuracy
       implicit none
   !
-     !implicit double precision (a-h,m-z)
      !include 'mpif.h'
-     common/printswitch/ip,it,iu1,iu2,iu3,iv,im2,im4,igs
-     common/constants/mu,ro,eo,pi,cang,ro2,dipol,emax,m1,m2,&
-     &xe,xeo,xk,xn,mconst,correct,romax,inatom,icoord,iic
-     common/hsparameters/rhs(ixlen),rhs2(ixlen)
-     common/trajectory/sw1,sw2,dtsf1,dtsf2,cmin,ifail,ifailc,inwr
-     common/angles/theta,phi,gamma
-     common/scaling/enersca,distsca
+
+     integer :: iatom
+
+     real(wp) :: ogamma, ngamma, ophi, nphi, otheta, ntheta
+     real(wp) :: rxy, rzy
+
+    type(constants) :: const
+    type(coordinates) :: coord
+    type(angles) :: ang
+    type(read_inp) :: inp
   !
   !      if(mpiP%imyrank.eq.0)then
-  !       if(iu2.eq.1.or.iu3.eq.1) write(8,610) theta*cang,phi*cang,
-  !     1  gamma*cang
+  !       if(iu2.eq.1.or.iu3.eq.1) write(8,610) ang%theta*cang,ang%phi*cang,
+  !     1  ang%gamma*cang
   !      else
-  !       if(iu2.eq.1.or.iu3.eq.1) write(1000+mpiP%imyrank,610)theta*cang,
-  !     1  phi*cang,
-  !     1  gamma*cang
+  !       if(iu2.eq.1.or.iu3.eq.1) write(1000+mpiP%imyrank,610)ang%theta*cang,
+  !     1  ang%phi*cang,
+  !     1  ang%gamma*cang
   !      endif
   !
-     do 1000 iatom=1,inatom
-        rxy=dsqrt(ox(iatom)*ox(iatom)+(oy(iatom)*oy(iatom)))
+     do iatom=1,inp%inatom
+        rxy=dsqrt(coord%ox(iatom)*coord%ox(iatom)+(coord%oy(iatom)*coord%oy(iatom)))
         if(rxy.gt.0.0d0)then
-           otheta=dacos(ox(iatom)/rxy)
-           if(oy(iatom).lt.0.d0) otheta=(2.d0*pi)-otheta
-           ntheta=otheta+theta
+           otheta=dacos(coord%ox(iatom)/rxy)
+           if(coord%oy(iatom).lt.0.d0) otheta=(2.d0*pi)-otheta
+           ntheta=otheta+ang%theta
         endif
-        fx(iatom)=dcos(ntheta)*rxy
-        fy(iatom)=dsin(ntheta)*rxy
-  1000 continue
+        coord%fx(iatom)=dcos(ntheta)*rxy
+        coord%fy(iatom)=dsin(ntheta)*rxy
+    end do
   !
-     do 2000 iatom=1,inatom
-        rzy=dsqrt(oz(iatom)*oz(iatom)+(fy(iatom)*fy(iatom)))
+     do iatom=1,inp%inatom
+        rzy=dsqrt(coord%oz(iatom)*coord%oz(iatom)+(coord%fy(iatom)*coord%fy(iatom)))
         if(rzy.gt.0.d0)then
-           ophi=dacos(oz(iatom)/rzy)
-           if(fy(iatom).lt.0.d0) ophi=(2.d0*pi)-ophi
-           nphi=ophi+phi
+           ophi=dacos(coord%oz(iatom)/rzy)
+           if(coord%fy(iatom).lt.0.d0) ophi=(2.d0*pi)-ophi
+           nphi=ophi+ang%phi
         endif
-        fz(iatom)=dcos(nphi)*rzy
-        fy(iatom)=dsin(nphi)*rzy
-  2000 continue
+        coord%fz(iatom)=dcos(nphi)*rzy
+        coord%fy(iatom)=dsin(nphi)*rzy
+      end do
   !
-     do 3000 iatom=1,inatom
-        rxy=dsqrt(fx(iatom)*fx(iatom)+(fy(iatom)*fy(iatom)))
+     do iatom=1,inp%inatom
+        rxy=dsqrt(coord%fx(iatom)*coord%fx(iatom)+(coord%fy(iatom)*coord%fy(iatom)))
         if(rxy.gt.0.d0)then
-           ogamma=dacos(fx(iatom)/rxy)
-           if(fy(iatom).lt.0.d0) ogamma=(2.d0*pi)-ogamma
-           ngamma=ogamma+gamma
+           ogamma=dacos(coord%fx(iatom)/rxy)
+           if(coord%fy(iatom).lt.0.d0) ogamma=(2.d0*pi)-ogamma
+           ngamma=ogamma+ang%gamma
         endif
-        fx(iatom)=dcos(ngamma)*rxy
-        fy(iatom)=dsin(ngamma)*rxy
-  3000 continue
+        coord%fx(iatom)=dcos(ngamma)*rxy
+        coord%fy(iatom)=dsin(ngamma)*rxy
+      end do
   !
   !      if(iu2.ne.0)then
   !       if(mpiP%imyrank.eq.0)then
@@ -893,21 +887,21 @@ program MobCal
   !       else
   !        write(1000+mpiP%imyrank,620)
   !       endif
-  !       do iatom=1,inatom
+  !       do iatom=1,inp%inatom
   !        if(mpiP%imyrank.eq.0)then
-  !         write(8,600) ox(iatom),oy(iatom),oz(iatom),fx(iatom),
-  !     1    fy(iatom),fz(iatom)
+  !         write(8,600) coord%ox(iatom),coord%oy(iatom),coord%oz(iatom),coord%fx(iatom),
+  !     1    coord%fy(iatom),coord%fz(iatom)
   !        else
-  !         write(1000+mpiP%imyrank,600) ox(iatom),oy(iatom),
-  !     1    oz(iatom),fx(iatom),
-  !     1    fy(iatom),fz(iatom)
+  !         write(1000+mpiP%imyrank,600) coord%ox(iatom),coord%oy(iatom),
+  !     1    coord%oz(iatom),coord%fx(iatom),
+  !     1    coord%fy(iatom),coord%fz(iatom)
   !        endif
   !       enddo
   !      endif
   !
   600 format(1x,1pe11.4,2(1x,e11.4),5x,3(1x,e11.4))
   610 format(//1x,'coordinates rotated by ROTATE',//1x,&
-     &'theta=',1pe11.4,1x,'phi=',e11.4,1x,'gamma=',1pe11.4,/)
+     &'ang%theta=',1pe11.4,1x,'ang%phi=',e11.4,1x,'ang%gamma=',1pe11.4,/)
   620 format(9x,'initial coordinates',24x,'new coordinates',/)
      return
   end
@@ -917,21 +911,17 @@ program MobCal
   subroutine dljpotHe(x,y,z,pot,dpotx,dpoty,dpotz,dmax,dchar)
   !
   !     Subroutine to calculate L-J + ion-dipole potential.
-      use get_commons, only: lj_parameters2
+      use get_commons, only: lj_parameters2, constants, coordinates, read_inp
+      use xtb_mctc_accuracy
       implicit none
   !
      integer, parameter :: ixlen=100000
-     character*4 dchar
-     common/printswitch/ip,it,iu1,iu2,iu3,iv,im2,im4,igs
-     common/constants/mu,ro,eo,pi,cang,ro2,dipol,emax,m1,m2,&
-     &xe,xeo,xk,xn,mconst,correct,romax,inatom,icoord,iic
-     common/charge/pcharge(ixlen),k_const(ixlen)
-     common/coordinates/fx(ixlen),fy(ixlen),fz(ixlen),&
-     &ox(ixlen),oy(ixlen),oz(ixlen)
-     common/hsparameters/rhs(ixlen),rhs2(ixlen)
-     common/trajectory/sw1,sw2,dtsf1,dtsf2,cmin,ifail,ifailc,inwr
-     common/angles/theta,phi,gamma
-     common/scaling/enersca,distsca
+
+     real(wp) :: x, y, z
+     real(wp) :: pot, dpotx, dpoty, dpotz, dmax
+
+     character(len=4) :: dchar
+
      dimension pottry(2,3)
      dimension pot_mol(3)
      dimension dpotxtry(2,3)
@@ -942,10 +932,13 @@ program MobCal
      dimension dpotz_mol(3)
 
      type(lj_parameters2) :: lj
+     type(constants) :: const
+     type(coordinates) :: coord
+     type(read_inp) :: inp
   !
   !     nitrogen : five charge model (Allen Tildesley, 14 page)
   !     Every data from B3LYP//aug-cc-pVDZ
-     dmax=2.d0*romax
+     dmax=2.d0*const%romax
      rx=0.d0
      ry=0.d0
      rz=0.d0
@@ -959,15 +952,15 @@ program MobCal
      sum4=0.d0
      sum5=0.d0
      sum6=0.d0
-     do 1100 iatom=1,inatom
+     do 1100 iatom=1,inp%inatom
   !
-        xx=x-fx(iatom)
+        xx=x-coord%fx(iatom)
         xx2=xx*xx
   !
-        yy=y-fy(iatom)
+        yy=y-coord%fy(iatom)
         yy2=yy*yy
   !
-        zz=z-fz(iatom)
+        zz=z-coord%fz(iatom)
         zz2=zz*zz
   !
         rxyz2=xx2+yy2+zz2
@@ -1015,12 +1008,12 @@ program MobCal
   !
   1100 continue
   !
-     pot=e00-(dipol*((rx*rx)+(ry*ry)+(rz*rz)))
-     dpotx=de00x-(dipol*((2.0d0*rx*sum1)+(2.0d0*ry*sum2)&
+     pot=e00-(const%dipol*((rx*rx)+(ry*ry)+(rz*rz)))
+     dpotx=de00x-(const%dipol*((2.0d0*rx*sum1)+(2.0d0*ry*sum2)&
      &+(2.0d0*rz*sum3)))
-     dpoty=de00y-(dipol*((2.0d0*rx*sum2)+(2.0d0*ry*sum4)&
+     dpoty=de00y-(const%dipol*((2.0d0*rx*sum2)+(2.0d0*ry*sum4)&
      &+(2.0d0*rz*sum5)))
-     dpotz=de00z-(dipol*((2.0d0*rx*sum3)+(2.0d0*ry*sum5)&
+     dpotz=de00z-(const%dipol*((2.0d0*rx*sum3)+(2.0d0*ry*sum5)&
      &+(2.0d0*rz*sum6)))
   !
      return
@@ -1034,22 +1027,18 @@ program MobCal
   !     Subroutine to calculate L-J + ion-dipole potential.
   !
      use mpi
-     use get_commons, only: mpi_parameters, lj_parameters2
+     use xtb_mctc_accuracy
+     use get_commons, only: mpi_parameters, lj_parameters2, constants, coordinates, &
+       & read_inp
+     use constants
      implicit none
+
+     real(wp) :: x, y, z
+     real(wp) :: pot, dpotx, dpoty, dpotz, dmax
 
      !include 'mpif.h'
      integer, parameter :: ixlen=100000
      character*4 dchar
-     common/printswitch/ip,it,iu1,iu2,iu3,iv,im2,im4,igs
-     common/constants/mu,ro,eo,pi,cang,ro2,dipol,emax,m1,m2,&
-     &xe,xeo,xk,xn,mconst,correct,romax,inatom,icoord,iic
-     common/charge/pcharge(ixlen),k_const(ixlen)
-     common/coordinates/fx(ixlen),fy(ixlen),fz(ixlen),&
-     &ox(ixlen),oy(ixlen),oz(ixlen)
-     common/hsparameters/rhs(ixlen),rhs2(ixlen)
-     common/trajectory/sw1,sw2,dtsf1,dtsf2,cmin,ifail,ifailc,inwr
-     common/angles/theta,phi,gamma
-     common/scaling/enersca,distsca
      dimension pottry(2,3)
      dimension pot_mol(3)
      dimension dpotxtry(2,3)
@@ -1061,11 +1050,14 @@ program MobCal
 
      type(mpi_parameters) :: mpiP
      type(lj_parameters2) :: lj
+     type(constants) :: const
+     type(coordinates) :: coord
+     type(read_inp) :: inp
 
   !
   !     nitrogen : five charge model (Allen Tildesley, 14 page)
   !     Every data from B3LYP//aug-cc-pVDZ
-     dmax=2.d0*romax
+     dmax=2.d0*const%romax
      bond=1.0976d-10
      Ptfn=0.d0
      xkT=500.d0*xk
@@ -1122,19 +1114,19 @@ program MobCal
               dpolz=dipolzz
            endif
   !
-           do 1100 iatom=1,inatom
+           do 1100 iatom=1,inp%inatom
   !
-              xx_center=x-fx(iatom)
+              xx_center=x-coord%fx(iatom)
               xx=xx_center+xc
               xx_center2=xx_center*xx_center
               xx2=xx*xx
   !
-              yy_center=y-fy(iatom)
+              yy_center=y-coord%fy(iatom)
               yy=yy_center+yc
               yy_center2=yy_center*yy_center
               yy2=yy*yy
   !
-              zz_center=z-fz(iatom)
+              zz_center=z-coord%fz(iatom)
               zz=zz_center+zc
               zz_center2=zz_center*zz_center
               zz2=zz*zz
@@ -1252,20 +1244,23 @@ program MobCal
   !     initiator with an adams-moulton predictor-corrector propagator.
   !
      use mpi
-     use get_commons
+     use get_commons, only: mpi_parameters, constants, trajectory
+     use xtb_mctc_accuracy
      implicit none
      !include 'mpif.h'
-     integer ns,nw,l
+
+     integer :: ns,nw,l
+     integer :: istep
+
+     real(wp) :: x, b, v
+     real(wp) :: vy, vx, vxyz
+     real(wp) :: erat, ang, d1
+
      dimension w(6),dw(6)
-     common/printswitch/ip,it,iu1,iu2,iu3,iv,im2,im4,igs
-     common/constants/mu,ro,eo,pi,cang,ro2,dipol,emax,m1,m2,&
-     &xe,xeo,xk,xn,mconst,correct,romax,inatom,icoord,iic
-     common/hsparameters/rhs(ixlen),rhs2(ixlen)
-     common/trajectory/sw1,sw2,dtsf1,dtsf2,cmin,ifail,ifailc,inwr
-     common/angles/theta,phi,gamma
-     common/scaling/enersca,distsca
 
   type(mpi_parameters) :: mpiP
+  type(constants) :: const
+  type(trajectory) :: trj
 
      vy=-v
      vx=0.d0
@@ -1279,21 +1274,21 @@ program MobCal
      if(v.ge.2000.d0) top=10.0d0-((v-2000.d0)*7.5d-3)
      if(v.ge.3000.d0) top=2.5d0
   !
-     dt1=top*dtsf1*1.0d-11/v
-     dt2=dt1*dtsf2
+     dt1=top*trj%dtsf1*1.0d-11/v
+     dt2=dt1*trj%dtsf2
      dt=dt1
   !
   !     determine trajectory start position
   !
-     e0=0.5d0*mu*v*v
+     e0=0.5d0*const%mu*v*v
      x=b
      z=0.d0
   !
      ymin=0.d0
      ymax=0.d0
-  !      do 200 i=1,inatom
-  !       if(fy(i).gt.ymax) ymax=fy(i)
-  !       if(fy(i).lt.ymin) ymin=fy(i)
+  !      do 200 i=1,inp%inatom
+  !       if(coord%fy(i).gt.ymax) ymax=coord%fy(i)
+  !       if(coord%fy(i).lt.ymin) ymin=coord%fy(i)
   !200   continue
      ymax=ymax/1.0d-10
      ymin=ymin/1.0d-10
@@ -1313,9 +1308,9 @@ program MobCal
      elseif(mpiP%igas.eq.1)then
         call dljpotHe(x,y,z,pot,dpotx,dpoty,dpotz,dmax,'calc')
      endif
-     if(dabs(pot/e0).gt.sw1)then
+     if(dabs(pot/e0).gt.trj%sw1)then
   !****
-        do while(dabs(pot/e0).gt.sw1)
+        do while(dabs(pot/e0).gt.trj%sw1)
            id2=id2+10
            y=dble(id2)*1.0d-10
            if(mpiP%igas.eq.2)then
@@ -1324,7 +1319,7 @@ program MobCal
               call dljpotHe(x,y,z,pot,dpotx,dpoty,dpotz,dmax,'calc')
            endif
         enddo
-        do while(dabs(pot/e0).lt.sw1)
+        do while(dabs(pot/e0).lt.trj%sw1)
            id2=id2-1
            y=dble(id2)*1.0d-10
            if(mpiP%igas.eq.2)then
@@ -1334,7 +1329,7 @@ program MobCal
            endif
         enddo
      else
-        do while(dabs(pot/e0).lt.sw1)
+        do while(dabs(pot/e0).lt.trj%sw1)
            id2=id2-1
            y=dble(id2)*1.0d-10
            if(mpiP%igas.eq.2)then
@@ -1360,11 +1355,11 @@ program MobCal
   !     initial coordinates and momenta
   !
      w(1)=x
-     w(2)=vx*mu
+     w(2)=vx*const%mu
      w(3)=y
-     w(4)=vy*mu
+     w(4)=vy*const%mu
      w(5)=z
-     w(6)=vz*mu
+     w(6)=vz*const%mu
      tim=0.d0
   
   !      if(it.eq.1) write(8,623)
@@ -1381,7 +1376,7 @@ program MobCal
      do while(istop.eq.0)
         call diffeq(l,tim,dt,w,dw,pot,dmax)
         nw=nw+1
-        if (nw.eq.inwr)then
+        if (nw.eq.trj%inwr)then
            ns=ns+nw
            nw=0
   !     check if trajectory has become "lost" (too many steps)
@@ -1393,7 +1388,7 @@ program MobCal
                  write(1000+mpiP%imyrank,105) b,v
               endif
               ang=pi/2.d0
-              e=0.5d0*mu*(dw(1)**2+dw(3)**2+dw(5)**2)
+              e=0.5d0*const%mu*(dw(1)**2+dw(3)**2+dw(5)**2)
               erat=(e+pot)/etot
               istep=ns
               ireturn=1
@@ -1403,16 +1398,16 @@ program MobCal
   !     check if the trajectory is finished
   !
               istop=1
-              if(dmax.lt.romax)istop=0
-              if(dabs(pot/e0).gt.sw2.and.dt.eq.dt1.and.istop.eq.1) then
+              if(dmax.lt.const%romax)istop=0
+              if(dabs(pot/e0).gt.trj%sw2.and.dt.eq.dt1.and.istop.eq.1) then
                  dt=dt2
                  l=0
               endif
-              if(dabs(pot/e0).lt.sw2.and.dt.eq.dt2.and.istop.eq.1) then
+              if(dabs(pot/e0).lt.trj%sw2.and.dt.eq.dt2.and.istop.eq.1) then
                  dt=dt1
                  l=0
               endif
-              if(dabs(pot/e0).gt.sw1)istop=0
+              if(dabs(pot/e0).gt.trj%sw1)istop=0
               if(ns.lt.50)istop=0
            endif
   !
@@ -1437,7 +1432,7 @@ program MobCal
   !
   !     check for energy conservation
   !
-     e=0.5d0*mu*(dw(1)**2+dw(3)**2+dw(5)**2)
+     e=0.5d0*const%mu*(dw(1)**2+dw(3)**2+dw(5)**2)
      erat=(e+pot)/etot
   622 format(1x,'trajectory start position =',1pe11.4)
   621 format(1x,'trajectory not started - potential too small')
@@ -1464,17 +1459,18 @@ program MobCal
   !     the equations of motion to be integrated.
   !
      use mpi
+     use xtb_mctc_accuracy
      implicit none
-     !implicit double precision (a-h,m-z)
      !include 'mpif.h'
-     dimension w(6),dw(6)
-     common/printswitch/ip,it,iu1,iu2,iu3,iv,im2,im4,igs
-     common/constants/mu,ro,eo,pi,cang,ro2,dipol,emax,m1,m2,&
-     &xe,xeo,xk,xn,mconst,correct,romax,inatom,icoord,iic
-     common/hsparameters/rhs(ixlen),rhs2(ixlen)
-     common/trajectory/sw1,sw2,dtsf1,dtsf2,cmin,ifail,ifailc,inwr
-     common/angles/theta,phi,gamma
-     common/scaling/enersca,distsca
+
+     integer :: ns,nw,l
+     integer :: istep
+
+     !real(wp) :: x, b, v
+     real(wp) :: tim, dt, pot, dmax
+
+     real(wp) :: w(6),dw(6)
+
      dimension a(4),b(4),c(4),ampc(5),amcc(4),array(6,40),savw(40),&
      &savdw(40),q(40)
 
@@ -1568,27 +1564,23 @@ program MobCal
   !     of the coordinates and momenta.
   !
       use mpi
-      use get_commons
+      use get_commons, only: mpi_parameters, constants
+      use xtb_mctc_accuracy
      implicit none
-     !implicit double precision (a-h,m-z)
      !include 'mpif.h'
-     dimension w(6),dw(6)
-     common/printswitch/ip,it,iu1,iu2,iu3,iv,im2,im4,igs
-     common/constants/mu,ro,eo,pi,cang,ro2,dipol,emax,m1,m2,&
-     &xe,xeo,xk,xn,mconst,correct,romax,inatom,icoord,iic
-     common/hsparameters/rhs(ixlen),rhs2(ixlen)
-     common/trajectory/sw1,sw2,dtsf1,dtsf2,cmin,ifail,ifailc,inwr
-     common/angles/theta,phi,gamma
-     common/scaling/enersca,distsca
+     real(wp) :: w(6),dw(6)
+     real(wp) :: pot, dpotx, dpoty, dpotz, dmax
+
 
   type(mpi_parameters) :: mpiP
+  type(constants) :: const
   !
   !     From Hamilton's equations, the time derivatives of the coordinates
   !     are the conjugates divided by the mass.
   !
-     dw(1)=w(2)/mu
-     dw(3)=w(4)/mu
-     dw(5)=w(6)/mu
+     dw(1)=w(2)/const%mu
+     dw(3)=w(4)/const%mu
+     dw(5)=w(6)/const%mu
   !
   !     Hamilton's equations for the time derivatives of the momenta
   !     evaluated by using the coordinate derivatives together with the
@@ -1623,35 +1615,29 @@ program MobCal
   !
    use xtb_mctc_accuracy
    use mpi
-   use get_commons
+   use get_commons, only: mpi_parameters, constants, coordinates, angles, trajectory, &
+     & read_inp
    implicit none
    !  implicit double precision (a-h,m-z)
    !include 'mpif.h'
 
    real(wp) :: t, mob, cs, sdevpc
    real(wp) :: b2max(100),parab2max(100),temp1,temp2
+   real(wp) :: abc_time
 
-     dimension pgst(100),wgst(100)
-     dimension q1st(100),q2st(100),cosx(0:500)
-     dimension om11st(100),om12st(100),om13st(100),om22st(100)
+   real(wp) :: pgst(100),wgst(100)
+   real(wp) :: q1st(100),q2st(100),cosx(0:500)
+   real(wp) :: om11st(100),om12st(100),om13st(100),om22st(100)
+   real(wp) :: q1stt(100),q2stt(100)
 
-     integer, parameter :: ixlen=100000
-     
-     common/printswitch/ip,it,iu1,iu2,iu3,iv,im2,im4,igs
-     common/constants/mu,ro,eo,pi,cang,ro2,dipol,emax,m1,m2,&
-     &xe,xeo,xk,xn,mconst,correct,romax,inatom,icoord,iic
-     common/charge/pcharge(ixlen),k_const(ixlen)
-     common/coordinates/fx(ixlen),fy(ixlen),fz(ixlen),&
-     &ox(ixlen),oy(ixlen),oz(ixlen)
-     common/hsparameters/rhs(ixlen),rhs2(ixlen)
-     common/trajectory/sw1,sw2,dtsf1,dtsf2,cmin,ifail,ifailc,inwr
-     common/angles/theta,phi,gamma
-     common/scaling/enersca,distsca
-  !****
-     dimension om11stt(100),om12stt(100),om13stt(100),om22stt(100)
-     dimension q1stt(100),q2stt(100)
+   real(wp) :: ayst, b, best, cest, bst2
 
   type(mpi_parameters) :: mpiP
+  type(constants) :: const
+  type(coordinates) :: coord
+  type(angles) :: ang
+  type(trajectory) :: trj
+  type(read_inp) :: inp
   !
   !****PATCH PATCH
      if(mpiP%imyrank.eq.0)then
@@ -1663,10 +1649,10 @@ program MobCal
      if(im2.eq.0)then
         if(mpiP%imyrank.eq.0)then
            write(8,631)
-           write(8,603) sw1,sw2,dtsf1,dtsf2,inwr,ifail
+           write(8,603) trj%sw1,trj%sw2,trj%dtsf1,trj%dtsf2,trj%inwr,trj%ifail
         else
            write(1000+mpiP%imyrank,631)
-           write(1000+mpiP%imyrank,603) sw1,sw2,dtsf1,dtsf2,inwr,ifail
+           write(1000+mpiP%imyrank,603) trj%sw1,trj%sw2,trj%dtsf1,trj%dtsf2,trj%inwr,trj%ifail
         endif
      endif
      it=0
@@ -1682,43 +1668,43 @@ program MobCal
         endif
      endif
      rmax=0.d0
-     do 1000 iatom=1,inatom
-        r=dsqrt((ox(iatom)*ox(iatom))+(oy(iatom)*oy(iatom))+&
-        &(oz(iatom)*oz(iatom)))
+     do 1000 iatom=1,inp%inatom
+        r=dsqrt((coord%ox(iatom)*coord%ox(iatom))+(coord%oy(iatom)*coord%oy(iatom))+&
+        &(coord%oz(iatom)*coord%oz(iatom)))
         if(r.gt.rmax) then
            rmax=r
            ihold=iatom
         endif
   1000 continue
   !
-     rzy=dsqrt((oz(ihold)*oz(ihold))+(oy(ihold)*oy(ihold)))
-     phi=dacos(oz(ihold)/rzy)
-     phi=phi+(pi/2.d0)
-     if(oy(ihold).lt.0.d0) phi=(2.d0*pi)-phi
-     phi=(2.d0*pi)-phi
-     theta=0.d0
-     gamma=0.d0
+     rzy=dsqrt((coord%oz(ihold)*coord%oz(ihold))+(coord%oy(ihold)*coord%oy(ihold)))
+     ang%phi=dacos(coord%oz(ihold)/rzy)
+     ang%phi=ang%phi+(pi/2.d0)
+     if(coord%oy(ihold).lt.0.d0) ang%phi=(2.d0*pi)-ang%phi
+     ang%phi=(2.d0*pi)-ang%phi
+     ang%theta=0.d0
+     ang%gamma=0.d0
      call rotate
-     rxy=dsqrt((fx(ihold)*fx(ihold))+(fy(ihold)*fy(ihold)))
-     gamma=dacos(fx(ihold)/rxy)
-     if(fy(ihold).lt.0.d0) gamma=(2.d0*pi)-gamma
-     gamma=(2.d0*pi)-gamma
+     rxy=dsqrt((coord%fx(ihold)*coord%fx(ihold))+(coord%fy(ihold)*coord%fy(ihold)))
+     ang%gamma=dacos(coord%fx(ihold)/rxy)
+     if(coord%fy(ihold).lt.0.d0) ang%gamma=(2.d0*pi)-ang%gamma
+     ang%gamma=(2.d0*pi)-ang%gamma
      if(im2.eq.0) iu3=1
      if(ip.eq.1) iu2=1
      call rotate
      iu3=0
      iu2=0
-     hold=fx(ihold)/rmax
+     hold=coord%fx(ihold)/rmax
      if(hold.lt.0.9999999999d0.or.hold.gt.1.0000000001d0.or.&
-     &fy(ihold).gt.1.0d-20.or.fz(ihold).gt.1.0d-20.or.&
-     &fy(ihold).lt.-1.0d-20.or.fz(ihold).lt.-1.0d-20) then
+     &coord%fy(ihold).gt.1.0d-20.or.coord%fz(ihold).gt.1.0d-20.or.&
+     &coord%fy(ihold).lt.-1.0d-20.or.coord%fz(ihold).lt.-1.0d-20) then
         if(mpiP%imyrank.eq.0)write(8,601)
-        do 1001 iatom=1,inatom
-           hold=dsqrt(fx(iatom)**2+fy(iatom)**2+fz(iatom)**2)
+        do 1001 iatom=1,inp%inatom
+           hold=dsqrt(coord%fx(iatom)**2+coord%fy(iatom)**2+coord%fz(iatom)**2)
            if(mpiP%imyrank.eq.0)then
-              write(8,602) iatom,fx(iatom),fy(iatom),fz(iatom),hold
+              write(8,602) iatom,coord%fx(iatom),coord%fy(iatom),coord%fz(iatom),hold
            else
-              write(1000+mpiP%imyrank,602) iatom,fx(iatom),fy(iatom),fz(iatom),&
+              write(1000+mpiP%imyrank,602) iatom,coord%fx(iatom),coord%fy(iatom),coord%fz(iatom),&
               &hold
            endif
   1001  continue
@@ -1738,7 +1724,7 @@ program MobCal
   !
   !     if(ip.eq.1) write(8,689)
      irn=1000
-     ddd=(rmax+romax)/dble(irn)
+     ddd=(rmax+const%romax)/dble(irn)
   !
      y=0.d0
      z=0.d0
@@ -1746,7 +1732,7 @@ program MobCal
      istop=0
      do while(istop.eq.0)
         do 1101 ir=1,irn
-           x=rmax+romax-(dble(ir)*ddd)
+           x=rmax+const%romax-(dble(ir)*ddd)
            if(mpiP%igas.eq.2)then
               call dljpotN2(x,y,z,pot,dpotx,dpoty,dpotz,dmax,'calc')
            elseif(mpiP%igas.eq.1)then
@@ -1775,7 +1761,7 @@ program MobCal
         abc_time=MPI_WTIME()
         delta_time=abc_time-mpiP%s_time
         write(8,*)'determined rmaxx in ',delta_time,' s from start'
-        write(8,*)'rmaxx=',rmaxx,', ro=',ro
+        write(8,*)'rmaxx=',rmaxx,', const%ro=',const%ro
      endif
   !****PATCH PATCH
   !
@@ -1785,7 +1771,7 @@ program MobCal
   !      istop=0
   !      do while(istop.eq.0)
   !       do 1100 ir=1,irn
-  !        y=rmax+romax-(dble(ir)*ddd)
+  !        y=rmax+const%romax-(dble(ir)*ddd)
   !        call dljpot(x,y,z,pot,dpotx,dpoty,dpotz,dmax,'calc')
   !        if(pot.gt.0.d0)then
   !         istop=1
@@ -1812,7 +1798,7 @@ program MobCal
   !      istop=0
   !      do while(istop.eq.0)
   !       do 1102 ir=1,irn
-  !        z=rmax+romax-(dble(ir)*ddd)
+  !        z=rmax+const%romax-(dble(ir)*ddd)
   !        call dljpot(x,y,z,pot,dpotx,dpoty,dpotz,dmax,'calc')
   !        if(pot.gt.0.d0)then
   !         istop=1
@@ -1835,7 +1821,7 @@ program MobCal
   !
   !     set-up integration over gst
   !
-     tst=xk*t/eo
+     tst=xk*t/const%eo
      if(im2.eq.0)then
         if(mpiP%imyrank.eq.0)then
            write(8,600) tst
@@ -1878,8 +1864,8 @@ program MobCal
            if(sum.lt.gstt)istop=0
         enddo
   !
-        hold1=dsqrt((pgst(i)*pgst(i)*eo)/(0.5d0*mu))
-        hold2=0.5d0*mu*hold1*hold1/(xk*t)
+        hold1=dsqrt((pgst(i)*pgst(i)*const%eo)/(0.5d0*const%mu))
+        hold2=0.5d0*const%mu*hold1*hold1/(xk*t)
         hold3=dexp(-pgst(i)*pgst(i)/tst)*pgst(i)**5.d0
         if(im2.eq.0)then
            if(mpiP%imyrank.eq.0)then
@@ -1908,15 +1894,15 @@ program MobCal
   !*****
   !
   !      dbst2=1.d0
-     dbst2=rmaxx/ro
+     dbst2=rmaxx/const%ro
      if(dbst2.lt.1.0d0)dbst2=1.0d0
      dbst22=dbst2/10.d0
-     cmin=0.0005d0
+     trj%cmin=0.0005d0
      if(im2.eq.0)then
         if(mpiP%imyrank.eq.0)then
-           write(8,652) cmin
+           write(8,652) trj%cmin
         else
-           write(1000+mpiP%imyrank,652) cmin
+           write(1000+mpiP%imyrank,652) trj%cmin
         endif
      endif
   !********************************************
@@ -1925,22 +1911,22 @@ program MobCal
   !********************************************
      do 3030 ig=istart,ifinish,-1
         gst2=pgst(ig)*pgst(ig)
-        v=dsqrt((gst2*eo)/(0.5d0*mu))
-        ibst=nint(rmaxx/ro)-6
+        v=dsqrt((gst2*const%eo)/(0.5d0*const%mu))
+        ibst=nint(rmaxx/const%ro)-6
         if(ig.lt.istart)ibst=nint(b2max(ig+1)/dbst2)-6
         if(ibst.lt.0) ibst=0
   !*****************
         istop=0
         do while(istop.eq.0)
            bst2=dbst2*dble(ibst)
-           b=ro*dsqrt(bst2)
+           b=const%ro*dsqrt(bst2)
            call gsang(v,b,erat,ang,d1,istep)
            cosx(ibst)=1.d0-dcos(ang)
   !       if(ip.eq.1) write(8,651) b,bst2,ang,cosx(ibst),erat
            if(ibst.ge.5)then
-              if(cosx(ibst).lt.cmin.and.cosx(ibst-1).lt.cmin.and.&
-              &cosx(ibst-2).lt.cmin.and.cosx(ibst-3).lt.cmin.and.&
-              &cosx(ibst-4).lt.cmin) istop=1
+              if(cosx(ibst).lt.trj%cmin.and.cosx(ibst-1).lt.trj%cmin.and.&
+              &cosx(ibst-2).lt.trj%cmin.and.cosx(ibst-3).lt.trj%cmin.and.&
+              &cosx(ibst-4).lt.trj%cmin) istop=1
            endif
            if(istop.eq.0)then
               ibst=ibst+1
@@ -1964,9 +1950,9 @@ program MobCal
         istop=0
         do while(istop.eq.0)
            b2max(ig)=b2max(ig)+dbst22
-           b=ro*dsqrt(b2max(ig))
+           b=const%ro*dsqrt(b2max(ig))
            call gsang(v,b,erat,ang,d1,istep)
-           if((1.d0-dcos(ang)).le.cmin)istop=1
+           if((1.d0-dcos(ang)).le.trj%cmin)istop=1
         enddo
   !*****************
   3030 continue
@@ -1992,13 +1978,13 @@ program MobCal
         if(mpiP%imyrank.eq.0)then
            write(8,637)
            do ig=1,mpiP%inp
-              write(8,630) pgst(ig),b2max(ig),ro*dsqrt(b2max(ig))*1.0d10
+              write(8,630) pgst(ig),b2max(ig),const%ro*dsqrt(b2max(ig))*1.0d10
            enddo
         else
            write(1000+mpiP%imyrank,637)
            do ig=1,mpiP%inp
               write(1000+mpiP%imyrank,630)&
-              &pgst(ig),b2max(ig),ro*dsqrt(b2max(ig))*1.0d10
+              &pgst(ig),b2max(ig),const%ro*dsqrt(b2max(ig))*1.0d10
            enddo
         endif
      endif
@@ -2051,7 +2037,7 @@ program MobCal
   !******
         do 4010 ig=1,mpiP%inp
            gst2=pgst(ig)*pgst(ig)
-           v=dsqrt((gst2*eo)/(0.5d0*mu))
+           v=dsqrt((gst2*const%eo)/(0.5d0*const%mu))
   !        if(mpiP%imyrank.eq.0)then
   !         if(ip.eq.1) write(8,682) ic,ig,gst2,v
   !        endif
@@ -2063,7 +2049,7 @@ program MobCal
               rnb=xrand()
               call rantate
               bst2=rnb*b2max(ig)
-              b=ro*dsqrt(bst2)
+              b=const%ro*dsqrt(bst2)
               call gsang(v,b,erat,ang,d1,istep)
               hold1=1.d0-dcos(ang)
               hold2=dsin(ang)*dsin(ang)
@@ -2117,11 +2103,11 @@ program MobCal
         hold2=0.d0
         if(im2.eq.0) write(8,685)
         do 4041 icc=1,mpiP%itn
-           temp=1.d0/(mconst/(dsqrt(t)*om11st(icc)*pi*ro*ro))
+           temp=1.d0/(const%mconst/(dsqrt(t)*om11st(icc)*pi*const%ro*const%ro))
            hold1=hold1+om11st(icc)
            hold2=hold2+temp
-           if(im2.eq.0) write(8,622) icc,om11st(icc)*pi*ro*ro*1.d20,&
-           &hold1*pi*ro*ro*1.d20/dble(icc),temp,hold2/dble(icc)
+           if(im2.eq.0) write(8,622) icc,om11st(icc)*pi*const%ro*const%ro*1.d20,&
+           &hold1*pi*const%ro*const%ro*1.d20/dble(icc),temp,hold2/dble(icc)
   4041  continue
   !
         if(im2.eq.0) then
@@ -2153,7 +2139,7 @@ program MobCal
         sdom11st=dsqrt(sdom11st/dble(mpiP%itn))
         sterr=sdom11st/dsqrt(dble(mpiP%itn))
         if(im2.eq.0) write(8,674) mom11st,sdom11st,sterr
-        cs=mom11st*pi*ro*ro
+        cs=mom11st*pi*const%ro*const%ro
         sdevpc=100.d0*sdom11st/mom11st
   !
   !     Use omegas to obtain higher order correction factor to mobility
@@ -2161,14 +2147,14 @@ program MobCal
         ayst=mom22st/mom11st
         best=((5.d0*mom12st)-(4.d0*mom13st))/mom11st
         cest=mom12st/mom11st
-        term=((4.d0*ayst)/(15.d0))+(.5d0*((m2-m1)**2.d0)/(m1*m2))
-        u2=term-(.08333d0*(2.4d0*best+1.d0)*(m1/m2))
-        w=(m1/m2)
+        term=((4.d0*ayst)/(15.d0))+(.5d0*((const%m2-const%m1)**2.d0)/(const%m1*const%m2))
+        u2=term-(.08333d0*(2.4d0*best+1.d0)*(const%m1/const%m2))
+        w=(const%m1/const%m2)
         delta=((((6.d0*cest)-5.d0)**2.d0)*w)/(60.d0*(1.d0+u2))
         f=1.d0/(1.d0-delta)
         if(im2.eq.0) write(8,673) f
         if(im2.eq.0) write(8,677) mom12st,mom13st,mom22st,u2,w,delta
-        mob=(mconst*f)/(dsqrt(t)*cs)
+        mob=(const%mconst*f)/(dsqrt(t)*cs)
         write(8,671) mob,1.d0/mob,cs*1.d20
         if(mpiP%imyrank.eq.0)then
            e_time=MPI_WTIME()
@@ -2202,14 +2188,14 @@ program MobCal
   620 format(/1x,'OMEGA(1,1)*=',1pe11.4,/)
   670 format(/1x,'v =',1pe11.4,5x,'q1st =',e11.4,/)
   684 format(1x,1pe11.4,7(e11.4))
-  683 format(/5x,'b/A',8x,'ang',6x,'(1-cosX)',4x,'e ratio',4x,'theta',&
-     &7x,'phi',7x,'gamma')
+  683 format(/5x,'b/A',8x,'ang',6x,'(1-cosX)',4x,'e ratio',4x,'ang%theta',&
+     &7x,'ang%phi',7x,'ang%gamma')
   !682 format(/1x,'ic =',mpiP%i3,1x,'ig =',mpiP%i4,1x,'gst2 =',1pe11.4,&
   !   &1x,'v =',e11.4)
   680 format(1x,'start mobility calculation')
   651 format(1x,1pe11.4,6(1x,e11.4))
   653 format(1x,'ibst greater than 750')
-  637 format(/5x,'gst',11x,'b2max/ro2',9x,'b/A',/)
+  637 format(/5x,'gst',11x,'b2max/const%ro2',9x,'b/A',/)
   630 format(1x,1pe11.4,5x,e11.4,5x,e11.4)
   !672 format(//1x,'number of complete cycles (mpiP%itn) =',mpiP%i6,/1x,&
   !   &'number of velocity points (mpiP%inp) =',mpiP%i6,/1x,&
@@ -2226,18 +2212,18 @@ program MobCal
      &//5x,'pgst',8x,'wgst',9x,'v',9x,'ke/kt',7x,'gst^5*',5x,'frac of',&
      &/48x,'exp(gst^2/tst)',3x,'sum',/)
   600 format(/1x,'t*=',1pe11.4)
-  615 format(1x,'along z axis emax =',1pe11.4,'eV rmax =',&
+  615 format(1x,'along z axis const%emax =',1pe11.4,'eV rmax =',&
      &e11.4,'A r00 =',e11.4,'A',/)
-  613 format(1x,'along y axis emax =',1pe11.4,'eV rmax =',&
+  613 format(1x,'along y axis const%emax =',1pe11.4,'eV rmax =',&
      &e11.4,'A r00 =',e11.4,'A')
-  614 format(1x,'along x axis emax =',1pe11.4,'eV rmax =',&
+  614 format(1x,'along x axis const%emax =',1pe11.4,'eV rmax =',&
      &e11.4,'A r00 =',e11.4,'A')
   601 format(/1x,'Problem orientating along x axis',/)
   632 format(/1x,'maximum extent orientated along x axis')
   631 format(/1x,'mobility calculation by MOBIL2 (trajectory method)',/)
-  !603 format(1x,'global trajectory parameters',//1x,'sw1 =',1pe11.4,7x,&
-  !   &'sw2 =',e11.4,/1x,'dtsf1 =',e11.4,5x,'dtsf2 =',e11.4,/1x,&
-  !   &'inwr =',mpiP%i3,14x,'ifail =',mpiP%i5)
+  !603 format(1x,'global trajectory parameters',//1x,'trj%sw1 =',1pe11.4,7x,&
+  !   &'trj%sw2 =',e11.4,/1x,'trj%dtsf1 =',e11.4,5x,'trj%dtsf2 =',e11.4,/1x,&
+  !   &'trj%inwr =',mpiP%i3,14x,'trj%ifail =',mpiP%i5)
   !602 format(1x,mpiP%i4,5x,1pe11.4,3(5x,e11.4))
   689 format(/)
      return
@@ -2245,11 +2231,11 @@ program MobCal
   !
   !     ***************************************************************
   !
-  double precision function xrand()
+  double precision function xrand() result(res)
+    use xtb_mctc_accuracy
     use get_commons
     implicit none
-     !implicit double precision (a-h,m-z)
-     dimension rvec(10)
+     real(wp) :: rvec(10)
   !
   !     XRAND is a random number generator that uses RANLUX if mpiP%i5=1
   !     otherwise it uses the standard RAND subroutine available in
@@ -2266,10 +2252,12 @@ program MobCal
   !
      if (mpiP%i5.eq.1) then
         call ranlux(rvec,1)
-        xrand=rvec(1)
+        !xrand=rvec(1)
+        res=rvec(1)
         return
      else
-        xrand=rand()
+        !xrand=rand()
+        res=rand()
         return
      endif
   !
@@ -2588,112 +2576,103 @@ program MobCal
   !     Reads in a new set of coordinates
   !
      use mpi
-     use get_commons
+     use get_commons, only: mpi_parameters, constants, coordinates, angles, & 
+       trajectory, read_inp
+     use xtb_mctc_accuracy
      implicit none
-     !implicit double precision (a-h,m-z)
      !include 'mpif.h'
+
+     integer :: igamma
+     real(wp) :: asymp
+     real(wp) :: pcharge(100000)
+
      character*30 unit,dchar,dummy
      integer, parameter :: ixlen=100000
-     dimension imass(ixlen),xmass(ixlen)
-     common/printswitch/ip,it,iu1,iu2,iu3,iv,im2,im4,igs
-     common/constants/mu,ro,eo,pi,cang,ro2,dipol,m1,m2,&
-     &xe,xeo,xk,xn,mconst,correct,romax,inatom,icoord,iic
-     common/charge/pcharge(ixlen),k_const(ixlen)
-     common/coordinates/fx(ixlen),fy(ixlen),fz(ixlen),&
-     &ox(ixlen),oy(ixlen),oz(ixlen)
-!     common/ljparameters/eolj(ixlen),rolj(ixlen),eox4(ixlen),&
-!     &ro6lj(ixlen),ro12lj(ixlen),dro6(ixlen),dro12(ixlen)
-     common/hsparameters/rhs(ixlen),rhs2(ixlen)
-     common/trajectory/sw1,sw2,dtsf1,dtsf2,cmin,ifail,ifailc,inwr
-     common/angles/theta,phi,gamma
-     common/scaling/enersca,distsca
+     integer :: imass(100000)
+     real(wp) :: xmass(100000)
   !
   type(mpi_parameters) :: mpiP
+  type(constants) :: const
+  type(coordinates) :: coord
+  type(angles) :: ang
+  type(trajectory) :: trj
+  type(read_inp) :: inp
 
      read(9,'(a30)',end=100) dummy
   100 continue
   !
-     do 2000 iatom=1,inatom
+     do 2000 iatom=1,inp%inatom
         if(dchar.eq.'calc') then
-           read(9,*) fx(iatom),fy(iatom),fz(iatom),&
+           read(9,*) coord%fx(iatom),coord%fy(iatom),coord%fz(iatom),&
            &ximass,pcharge(iatom)
         else
-           read(9,*) fx(iatom),fy(iatom),fz(iatom),ximass
+           read(9,*) coord%fx(iatom),coord%fy(iatom),coord%fz(iatom),ximass
         endif
         imass(iatom)=nint(ximass)
         if(unit.eq.'au') then
-           fx(iatom)=fx(iatom)*0.52917706d0
-           fy(iatom)=fy(iatom)*0.52917706d0
-           fz(iatom)=fz(iatom)*0.52917706d0
+           coord%fx(iatom)=coord%fx(iatom)*0.52917706d0
+           coord%fy(iatom)=coord%fy(iatom)*0.52917706d0
+           coord%fz(iatom)=coord%fz(iatom)*0.52917706d0
         endif
   2000 continue
   !
      mx=0.d0
-     do 2021 iatom=1,inatom
+     do 2021 iatom=1,inp%inatom
         mx=mx+xmass(iatom)
   2021 continue
   !
-     if(mx.ne.m2) then
+     if(mx.ne.const%m2) then
         write(8,624)
         if(mpiP%imyrank.eq.0)close(8)
         call MPI_FINALIZE(mpiP%ierr)
         stop
      endif
   !
-!     do 2030 iatom=1,inatom
-!        rhs2(iatom)=rhs(iatom)*rhs(iatom)
-!        eox4(iatom)=4.d0*eolj(iatom)
-!        ro2lj=rolj(iatom)*rolj(iatom)
-!        ro6lj(iatom)=ro2lj*ro2lj*ro2lj
-!        ro12lj(iatom)=ro6lj(iatom)*ro6lj(iatom)
-!        dro6(iatom)=6.d0*ro6lj(iatom)
-!        dro12(iatom)=12.d0*ro12lj(iatom)
-!  2030 continue
   !
      fxo=0.d0
      fyo=0.d0
      fzo=0.d0
-     do 2009 iatom=1,inatom
-        fxo=fxo+(fx(iatom)*xmass(iatom))
-        fyo=fyo+(fy(iatom)*xmass(iatom))
-        fzo=fzo+(fz(iatom)*xmass(iatom))
+     do 2009 iatom=1,inp%inatom
+        fxo=fxo+(coord%fx(iatom)*xmass(iatom))
+        fyo=fyo+(coord%fy(iatom)*xmass(iatom))
+        fzo=fzo+(coord%fz(iatom)*xmass(iatom))
   2009 continue
-     fxo=fxo/m2
-     fyo=fyo/m2
-     fzo=fzo/m2
-     do 2010 iatom=1,inatom
-        fx(iatom)=(fx(iatom)-fxo)*1.d-10*correct
-        fy(iatom)=(fy(iatom)-fyo)*1.d-10*correct
-        fz(iatom)=(fz(iatom)-fzo)*1.d-10*correct
+     fxo=fxo/const%m2
+     fyo=fyo/const%m2
+     fzo=fzo/const%m2
+     do 2010 iatom=1,inp%inatom
+        coord%fx(iatom)=(coord%fx(iatom)-fxo)*1.d-10*correct
+        coord%fy(iatom)=(coord%fy(iatom)-fyo)*1.d-10*correct
+        coord%fz(iatom)=(coord%fz(iatom)-fzo)*1.d-10*correct
   2010 continue
   !
-     do 3000 iatom=1,inatom
-        ox(iatom)=fx(iatom)
-        oy(iatom)=fy(iatom)
-        oz(iatom)=fz(iatom)
+     do 3000 iatom=1,inp%inatom
+        coord%ox(iatom)=coord%fx(iatom)
+        coord%oy(iatom)=coord%fy(iatom)
+        coord%oz(iatom)=coord%fz(iatom)
   3000 continue
   !
   !     determine structural asymmetry parameter
   !
-     theta=0.d0
+     ang%theta=0.d0
      asymp=0.d0
-     do 5050 igamma=0,360,2
-        do 5000 iphi=0,180,2
-           gamma=dble(igamma)/cang
-           phi=dble(iphi)/cang
+     do igamma=0,360,2
+        do iphi=0,180,2
+           ang%gamma=dble(igamma)/cang
+           ang%phi=dble(iphi)/cang
            call rotate
            xyzsum=0.d0
            yzsum=0.d0
-           do 5005 iatom=1,inatom
-              xyz=dsqrt(fx(iatom)**2+fy(iatom)**2+fz(iatom)**2)
-              yz=dsqrt(fy(iatom)**2+fz(iatom)**2)
+           do iatom=1,inp%inatom
+              xyz=dsqrt(coord%fx(iatom)**2+coord%fy(iatom)**2+coord%fz(iatom)**2)
+              yz=dsqrt(coord%fy(iatom)**2+coord%fz(iatom)**2)
               xyzsum=xyzsum+xyz
               yzsum=yzsum+yz
-  5005     continue
+           end do
            hold=((pi/4.d0)*xyzsum)/yzsum
            if(hold.gt.asymp) asymp=hold
-  5000  continue
-  5050 continue
+         end do
+      end do
   !
   624 format(1x,'masses do not add up')
   !
