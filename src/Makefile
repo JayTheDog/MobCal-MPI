@@ -3,7 +3,7 @@ FC=mpifort
 CFLAGS=-c -g -Og #-Wall
 
 ## Turn on for debugging
-DFLAGS=-fbacktrace -fmax-errors=5
+DFLAGS=-fbacktrace -fmax-errors=8
 
 #linking
 a.out: mobcal_jay.o

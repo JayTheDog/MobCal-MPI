@@ -978,9 +978,9 @@ program MobCal
   !*****
   
         if(rxyz.lt.dmax) dmax=rxyz
-        rxyz3=rxyz2*rxyz
         rxyz5=rxyz3*rxyz2
-  !**** Exp6 potential
+        !**** Exp6 potential
+        rxyz3=rxyz2*rxyz
         e00=e00+lj%eij(iatom)*(expterm-dispterm)
   !**** Exp6 derivative
         de00=lj%eij(iatom)*(expterm*(-12.0d0)+dispterm*6.0d0/R)&
@@ -1032,21 +1032,38 @@ program MobCal
        & read_inp
      use constants
      implicit none
+     !include 'mpif.h'
+
+     integer :: isamp, ibatom, iatom
 
      real(wp) :: x, y, z
      real(wp) :: pot, dpotx, dpoty, dpotz, dmax
+     real(wp) :: Ptfn, xkT, pc, pc_center
+     real(wp) :: dpolx, dpoly, dpolz, dipolzz, dipolxx, pot_min
+     real(wp) :: qpol, dqpolx, dqpoly, dqpolz
 
-     !include 'mpif.h'
-     integer, parameter :: ixlen=100000
-     character*4 dchar
-     dimension pottry(2,3)
-     dimension pot_mol(3)
-     dimension dpotxtry(2,3)
-     dimension dpotx_mol(3)
-     dimension dpotytry(2,3)
-     dimension dpoty_mol(3)
-     dimension dpotztry(2,3)
-     dimension dpotz_mol(3)
+     real(wp) :: rx, ry, rz
+     real(wp) :: de00,e00, de00x, de00y, de00z, sum1, sum2, sum3, sum4, sum5, sum6
+     real(wp) :: xc, yc, zc
+     real(wp) :: xx_center, xx, xx_center2, xx2
+     real(wp) :: yy_center, yy, yy_center2, yy2
+     real(wp) :: zz_center, zz, zz_center2, zz2
+     real(wp) :: rxyz_center, rxyz, rxyz_center2, rxyz2
+     real(wp) :: R, R2, R6, preexp, expterm, predisp, dispterm
+     real(wp) :: const_k
+
+     real(wp) :: pottry(2,3)
+     real(wp) :: pot_mol(3)
+     real(wp) :: dpotxtry(2,3)
+     real(wp) :: dpotx_mol(3)
+     real(wp) :: dpotytry(2,3)
+     real(wp) :: dpoty_mol(3)
+     real(wp) :: dpotztry(2,3)
+     real(wp) :: dpotz_mol(3)
+
+     real(wp), parameter :: bond=1.0976d-10
+
+     character(len=4) :: dchar
 
      type(mpi_parameters) :: mpiP
      type(lj_parameters2) :: lj
@@ -1058,10 +1075,12 @@ program MobCal
   !     nitrogen : five charge model (Allen Tildesley, 14 page)
   !     Every data from B3LYP//aug-cc-pVDZ
      dmax=2.d0*const%romax
-     bond=1.0976d-10
+     
      Ptfn=0.d0
      xkT=500.d0*xk
      pc=-0.4825d0
+     predisp=2.25d0
+     preexp=1.84d5
   !     -1.447 D A
      pc_center=-(pc)
   !     B3LYP/aug-cc-pVDZ
@@ -1130,7 +1149,7 @@ program MobCal
               zz=zz_center+zc
               zz_center2=zz_center*zz_center
               zz2=zz*zz
-  !
+              !
               rxyz_center2=xx_center2+yy_center2+zz_center2
               rxyz2=xx2+yy2+zz2
   !
@@ -1141,9 +1160,7 @@ program MobCal
               R=rxyz/lj%RijStar(iatom)
               R2=R*R
               R6=R2*R2*R2
-              preexp=1.84d5
               expterm=preexp*dexp(-12.0d0*R)
-              predisp=2.25d0
               dispterm=predisp/R6
   !*****
   
@@ -1614,6 +1631,7 @@ program MobCal
   !     All integrations Monte Carlo (except over velocity).
   !
    use xtb_mctc_accuracy
+   use constants
    use mpi
    use get_commons, only: mpi_parameters, constants, coordinates, angles, trajectory, &
      & read_inp
@@ -1621,9 +1639,18 @@ program MobCal
    !  implicit double precision (a-h,m-z)
    !include 'mpif.h'
 
+   integer :: i, iatom, ibst, ic, icc, ifinish, ig, ihold, im, im2, ip, ir, irn
+   integer :: istart, istep,  istop, it, iu2, iu3
+
    real(wp) :: t, mob, cs, sdevpc
    real(wp) :: b2max(100),parab2max(100),temp1,temp2
    real(wp) :: abc_time
+   real(wp) ::  d1, dbst2, dbst22, ddd, delta, delta_time, dgst, dmax
+   real(wp) :: dpotx, dpoty, dpotz
+   real(wp) :: e_time, emaxx, erat, f, gst, gst2, gstt, hold, hold1, hold2, hold3
+   real(wp) :: mom11st, mom12st, mom13st, mom22st, pot, r, r00x, rmax, rmaxx
+   real(wp) :: rnb, rxy, rzy, sdom11st, sterr, sum, sum1, sum2, temp, term, tst, tst3
+   real(wp) :: u2, v, w, x, y, z 
 
    real(wp) :: pgst(100),wgst(100)
    real(wp) :: q1st(100),q2st(100),cosx(0:500)
@@ -2182,7 +2209,7 @@ program MobCal
   676 format(1x,1pe11.4,1x,e11.4,1x,e11.4)
   675 format(//1x,'average values for q1st',//5x,&
      &'gst2',8x,'wgst',8x,'q1st')
-  !622 format(1x,mpiP%i3,4x,1pe11.4,4x,e11.4,4x,e11.4,4x,e11.4)
+  622 format(1x,i3,4x,1pe11.4,4x,e11.4,4x,e11.4,4x,e11.4)
   685 format(/1x,'summary of mobility calculations',//1x,'cycle',&
      &5x,'cs/A^2',6x,'avge cs/A^2',8x,'Ko^-1',7x,'avge Ko^-1')
   620 format(/1x,'OMEGA(1,1)*=',1pe11.4,/)
@@ -2190,18 +2217,18 @@ program MobCal
   684 format(1x,1pe11.4,7(e11.4))
   683 format(/5x,'b/A',8x,'ang',6x,'(1-cosX)',4x,'e ratio',4x,'ang%theta',&
      &7x,'ang%phi',7x,'ang%gamma')
-  !682 format(/1x,'ic =',mpiP%i3,1x,'ig =',mpiP%i4,1x,'gst2 =',1pe11.4,&
-  !   &1x,'v =',e11.4)
+  682 format(/1x,'ic =',i3,1x,'ig =',i4,1x,'gst2 =',1pe11.4,&
+     &1x,'v =',e11.4)
   680 format(1x,'start mobility calculation')
   651 format(1x,1pe11.4,6(1x,e11.4))
   653 format(1x,'ibst greater than 750')
   637 format(/5x,'gst',11x,'b2max/const%ro2',9x,'b/A',/)
   630 format(1x,1pe11.4,5x,e11.4,5x,e11.4)
-  !672 format(//1x,'number of complete cycles (mpiP%itn) =',mpiP%i6,/1x,&
-  !   &'number of velocity points (mpiP%inp) =',mpiP%i6,/1x,&
-  !   &'number of random points (mpiP%imp) =',mpiP%i6,/1x,&
-  !   &'total number of points =',i7,/)
-  !681 format(/1x,'cycle number, ic =',mpiP%i3)
+  672 format(//1x,'number of complete cycles (mpiP%itn) =',i6,/1x,&
+     &'number of velocity points (mpiP%inp) =',i6,/1x,&
+     &'number of random points (mpiP%imp) =',i6,/1x,&
+     &'total number of points =',i7,/)
+  681 format(/1x,'cycle number, ic =',i3)
   650 format(/1x,'gst2 =',1pe11.4,1x,'v =',e11.4,/6x,'b',&
      &10x,'bst2',7x,'X ang',7x,'cos(X)',6x,'e ratio')
   652 format(//1x,'set up b2 integration - integration over',&
@@ -2221,10 +2248,10 @@ program MobCal
   601 format(/1x,'Problem orientating along x axis',/)
   632 format(/1x,'maximum extent orientated along x axis')
   631 format(/1x,'mobility calculation by MOBIL2 (trajectory method)',/)
-  !603 format(1x,'global trajectory parameters',//1x,'trj%sw1 =',1pe11.4,7x,&
-  !   &'trj%sw2 =',e11.4,/1x,'trj%dtsf1 =',e11.4,5x,'trj%dtsf2 =',e11.4,/1x,&
-  !   &'trj%inwr =',mpiP%i3,14x,'trj%ifail =',mpiP%i5)
-  !602 format(1x,mpiP%i4,5x,1pe11.4,3(5x,e11.4))
+  603 format(1x,'global trajectory parameters',//1x,'trj%sw1 =',1pe11.4,7x,&
+     &'trj%sw2 =',e11.4,/1x,'trj%dtsf1 =',e11.4,5x,'trj%dtsf2 =',e11.4,/1x,&
+     &'trj%inwr =',i3,14x,'trj%ifail =',i5)
+  602 format(1x,i4,5x,1pe11.4,3(5x,e11.4))
   689 format(/)
      return
   end
